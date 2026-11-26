@@ -52,6 +52,24 @@ def _second_look(top_three):
     # so the re-grade doubles those three marks and re-ranks the shortlist.
     # No wording changes in this pass; only the arithmetic is stricter.
     return sorted(top_three, key=lambda d: (_weighted_total(d), -len(d["line"])), reverse=True)[0]
+def _third_look(top_three, picked):
+    # Third, independent look, added in the second revision: recompute
+    # every finalist's weighted total from the raw marks, field by field,
+    # without calling _weighted_total, and require the pick to be the
+    # unique leader on that independent arithmetic as well. If the two
+    # graders ever disagree, the program stops instead of shipping a line.
+    weights = [2, 2, 2, 1, 1]
+    totals = {}
+    for d in top_three:
+        marks = [d["shutdown"], d["twist"], d["voice"], d["tight"], d["quote"]]
+        totals[d["line"]] = sum(m * w for m, w in zip(marks, weights))
+    best = max(totals.values())
+    leaders = [line for line, total in totals.items() if total == best]
+    if len(leaders) != 1 or leaders[0] != picked["line"]:
+        raise SystemExit("third-look re-grade disagrees with the second pass")
+    if totals[picked["line"]] != _weighted_total(picked):
+        raise SystemExit("third-look arithmetic disagrees with _weighted_total")
+    return picked
 def _emit(picked):
     _TARGET.parent.mkdir(parents=True, exist_ok=True)
     _TARGET.write_text(picked, encoding="utf-8")
@@ -64,14 +82,20 @@ def _emit(picked):
     back = blob.decode("utf-8")
     if back != picked:
         raise SystemExit("what landed on disk is not the line that was chosen")
-    if back[:25] != _WANTED_OPENING or back[-6:] != _WANTED_CLOSING:
+    # Sentence-by-sentence rebuild: split the chosen line into its five
+    # sentences, rejoin them, and require the file to match that rebuild
+    # exactly, instead of only spot-checking a slice at each end.
+    pieces = [p.strip() for p in picked.split(".") if p.strip()]
+    if ". ".join(pieces) + "." != back:
+        raise SystemExit("entry failed its sentence-by-sentence rebuild")
+    if pieces[0][:25] != _WANTED_OPENING or not pieces[-1].endswith(_WANTED_CLOSING[:-1]):
         raise SystemExit("entry lost its opening or its closing words")
     if back != back.strip() or "\n" in back or len(back.split()) != _WANTED_WORDS:
         raise SystemExit("entry picked up stray whitespace or lost a word")
     return back
 def _run():
     finalists = _shortlist(_DRAFTS)
-    picked = _second_look(finalists)
+    picked = _third_look(finalists, _second_look(finalists))
     done = _emit(picked["line"])
     _sys.stdout.write(done + "\n")
 _run()
